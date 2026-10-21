@@ -1,7 +1,7 @@
 'use strict';
 
 /* =====================================================================
-   As perguntas ficam em js/questions.js (DECKS e SURPRISES).
+   As perguntas ficam em js/decks/ (um arquivo por vibe + extras.js).
    Aqui ficam as vibes: visual, textos e efeitos de cada tema.
    ===================================================================== */
 const THEMES = {
@@ -47,6 +47,15 @@ const THEMES = {
   }
 };
 
+// "Baralho todo": as melhores cartas de cada baralho, e o visual muda conforme a vibe da carta
+const TODO = {
+  icon: 'layers', name: 'Baralho todo', short: 'o melhor de cada vibe',
+  swatch: 'conic-gradient(from 200deg, #ff6a4d, #ffd23f, #9be15d, #5b6ee8, #f08aa0, #ff6a4d)',
+  lead: 'O melhor de cada vibe num baralho só. Escolham os baralhos e o visual muda junto com o assunto da carta.',
+  visual: 'papo'
+};
+const TOP_CARDS = 6; // quantas cartas de cada baralho entram no baralho todo
+
 const SURPRISE_CAT = { id: 'surpresa', icon: 'dice', name: 'Carta surpresa', mode: 'surprise' };
 const SIP_CAT = { id: 'gole', icon: 'cheers', name: 'Gole ou trago', mode: 'sip' };
 const GAME_CARDS = {
@@ -83,12 +92,14 @@ const store = {
    ===================================================================== */
 const saved = store.get();
 const state = {
-  theme: THEMES[saved.theme] ? saved.theme : 'leve',
+  theme: THEMES[saved.theme] || saved.theme === 'todo' ? saved.theme : 'leve',
+  visual: 'leve',     // tema que tá aparecendo na tela (no baralho todo muda a cada carta)
   names: ['', ''],
-  selected: {},       // tema -> Set de ids de baralho
+  selected: {},       // tema -> Set de ids de baralho ("todo" usa "tema:id")
   surprises: saved.surprises !== false,
   sips: saved.sips !== false,
   games: saved.games !== false,
+  seen: Array.isArray(saved.seen) ? saved.seen : [],   // cartas coringa que já saíram
   deck: [],
   index: -1,          // -1 = nenhuma carta virada ainda
   firstTurn: 0,
@@ -100,6 +111,25 @@ Object.keys(THEMES).forEach((t) => {
   const prev = saved.selected && Array.isArray(saved.selected[t]) ? saved.selected[t].filter((id) => ids.includes(id)) : [];
   state.selected[t] = new Set(prev.length ? prev : ids);
 });
+{
+  const keys = Object.keys(THEMES).flatMap((t) => (DECKS[t] || []).map((d) => `${t}:${d.id}`));
+  const prev = saved.selected && Array.isArray(saved.selected.todo) ? saved.selected.todo.filter((k) => keys.includes(k)) : [];
+  state.selected.todo = new Set(prev.length ? prev : keys);
+}
+
+// baralhos que contam agora (no baralho todo, a Brisa só entra com gole ou trago ligado)
+function activeDecks() {
+  if (state.theme !== 'todo') {
+    return (DECKS[state.theme] || [])
+      .filter((d) => state.selected[state.theme].has(d.id))
+      .map((d) => ({ ...d, theme: state.theme }));
+  }
+  return Object.keys(THEMES)
+    .filter((t) => t !== 'brisa' || state.sips)
+    .flatMap((t) => (DECKS[t] || [])
+      .filter((d) => state.selected.todo.has(`${t}:${d.id}`))
+      .map((d) => ({ ...d, theme: t, cards: d.cards.slice(0, TOP_CARDS) })));
+}
 
 const screens = { start: $('#screen-start'), game: $('#screen-game'), end: $('#screen-end') };
 
@@ -117,7 +147,8 @@ function persist() {
     selected,
     surprises: state.surprises,
     sips: state.sips,
-    games: state.games
+    games: state.games,
+    seen: state.seen
   });
 }
 
@@ -126,7 +157,7 @@ function persist() {
    ===================================================================== */
 const themesBox = $('#themes');
 
-Object.entries(THEMES).forEach(([id, t]) => {
+[...Object.entries(THEMES), ['todo', TODO]].forEach(([id, t]) => {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'theme-opt';
@@ -145,18 +176,37 @@ Object.entries(THEMES).forEach(([id, t]) => {
   themesBox.appendChild(btn);
 });
 
-function applyTheme(id) {
-  state.theme = id;
+// troca só o visual (cores, fundo animado, verso da carta)
+function setVisual(id) {
+  state.visual = id;
   const t = THEMES[id];
   document.documentElement.dataset.theme = id;
   document.querySelector('meta[name="theme-color"]').content = t.metaColor;
-  themesBox.querySelectorAll('.theme-opt').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.theme === id)));
   document.querySelectorAll('[data-theme-icon]').forEach((el) => { el.innerHTML = icon(t.icon); });
   $('#back-sym').innerHTML = t.backText ? '' : icon(t.back);
   if (t.backText) $('#back-sym').textContent = t.backText;
+  background.setTheme(id);
+}
+
+// troca a vibe escolhida na tela inicial
+function applyTheme(id) {
+  state.theme = id;
+  const t = id === 'todo' ? TODO : THEMES[id];
+  setVisual(id === 'todo' ? TODO.visual : id);
+  if (id === 'todo') document.querySelectorAll('#screen-start [data-theme-icon]').forEach((el) => { el.innerHTML = icon(TODO.icon); });
+  themesBox.querySelectorAll('.theme-opt').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.theme === id)));
   $('#lead').textContent = t.lead;
   renderDecks();
-  background.setTheme(id);
+}
+
+// no baralho todo, a tela muda de vibe junto com a carta (com um fade suave)
+async function switchVisual(id) {
+  if (id === state.visual) return;
+  if (document.startViewTransition && !reduceMotion) {
+    await document.startViewTransition(() => setVisual(id)).finished.catch(() => {});
+  } else {
+    setVisual(id);
+  }
 }
 
 /* =====================================================================
@@ -176,32 +226,52 @@ function updateEyebrow() {
 updateEyebrow();
 
 const catsBox = $('#cats');
+function deckChip(deck, key, count, delay) {
+  const sel = state.selected[state.theme];
+  const label = document.createElement('label');
+  label.className = 'cat';
+  label.style.animationDelay = `${delay}s`;
+  label.innerHTML = `
+    <input type="checkbox">
+    <span class="chip">
+      <span class="icon">${icon(deck.icon)}</span>
+      <span class="name"></span>
+      <span class="desc"></span>
+      <span class="count">${count}</span>
+    </span>`;
+  label.querySelector('.name').textContent = deck.name;
+  label.querySelector('.desc').textContent = deck.desc;
+  const input = label.querySelector('input');
+  input.checked = sel.has(key);
+  input.addEventListener('change', () => {
+    input.checked ? sel.add(key) : sel.delete(key);
+    $('#cats-error').hidden = activeDecks().length > 0;
+    persist();
+  });
+  return label;
+}
+
 function renderDecks() {
   catsBox.innerHTML = '';
-  const sel = state.selected[state.theme];
-  (DECKS[state.theme] || []).forEach((deck, i) => {
-    const label = document.createElement('label');
-    label.className = 'cat';
-    label.style.animationDelay = `${i * 0.06}s`;
-    label.innerHTML = `
-      <input type="checkbox">
-      <span class="chip">
-        <span class="icon">${icon(deck.icon)}</span>
-        <span class="name"></span>
-        <span class="desc"></span>
-        <span class="count">${deck.cards.length} cartas</span>
-      </span>`;
-    label.querySelector('.name').textContent = deck.name;
-    label.querySelector('.desc').textContent = deck.desc;
-    const input = label.querySelector('input');
-    input.checked = sel.has(deck.id);
-    input.addEventListener('change', () => {
-      input.checked ? sel.add(deck.id) : sel.delete(deck.id);
-      $('#cats-error').hidden = sel.size > 0;
-      persist();
+  if (state.theme === 'todo') {
+    let i = 0;
+    Object.entries(THEMES).forEach(([t, theme]) => {
+      if (t === 'brisa' && !state.sips) return;
+      const head = document.createElement('p');
+      head.className = 'cat-group';
+      head.innerHTML = `${icon(theme.icon)}<span></span>`;
+      head.querySelector('span').textContent = theme.name;
+      catsBox.appendChild(head);
+      (DECKS[t] || []).forEach((deck) => {
+        const n = Math.min(TOP_CARDS, deck.cards.length);
+        catsBox.appendChild(deckChip(deck, `${t}:${deck.id}`, `${n} melhores`, (i++) * 0.03));
+      });
     });
-    catsBox.appendChild(label);
-  });
+  } else {
+    (DECKS[state.theme] || []).forEach((deck, i) => {
+      catsBox.appendChild(deckChip(deck, deck.id, `${deck.cards.length} cartas`, i * 0.06));
+    });
+  }
   $('#cats-error').hidden = true;
 }
 
@@ -219,6 +289,7 @@ gamesInput.addEventListener('change', () => { state.games = gamesInput.checked; 
 function updateSipsUI() {
   themesBox.querySelector('[data-theme="brisa"]').hidden = !state.sips;
   if (!state.sips && state.theme === 'brisa') applyTheme('leve');
+  else if (state.theme === 'todo') renderDecks();
 }
 document.querySelectorAll('[data-icon]').forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
 
@@ -233,7 +304,7 @@ $('#start-form').addEventListener('submit', (e) => {
       ok = false;
     }
   });
-  if (!state.selected[state.theme].size) { $('#cats-error').hidden = false; ok = false; }
+  if (!activeDecks().length) { $('#cats-error').hidden = false; ok = false; }
   if (!ok) { (name1.value.trim() ? name2 : name1).focus(); return; }
 
   state.names = [name1.value.trim(), name2.value.trim()];
@@ -250,32 +321,107 @@ const btnNext = $('#btn-next');
 const btnFav = $('#btn-fav');
 const tip = $('#tip');
 
+// o quanto cada vibe "esquenta" a noite: o jogo começa leve e o romance vai chegando aos poucos
+function blockWeight(cat, progress) {
+  const byTheme = {
+    leve: 1.4 - progress,
+    resenha: 1.1,
+    papo: 0.6 + 0.6 * progress,
+    brisa: 0.7 + 0.3 * progress,
+    romance: 0.15 + 1.3 * progress
+  };
+  return (byTheme[cat.theme] ?? 1) * (cat.mode === 'challenge' ? 0.8 : 1);
+}
+
+function weightedPick(items, weights) {
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
+
+// as perguntas em blocos do mesmo baralho, pra conversa não pular de assunto toda hora.
+// desafio vem em bloco curto (2–3) pra não virar uma sequência só de desafio.
+function buildQuestions() {
+  const todo = state.theme === 'todo';
+  const blocks = [];
+  activeDecks().forEach((d) => {
+    const cards = shuffle(d.cards.map((text) => ({ text, cat: d })));
+    while (cards.length) {
+      const size = d.mode === 'challenge' ? rand(2, 3) : todo ? rand(3, 4) : rand(4, 6);
+      blocks.push(cards.splice(0, Math.round(size)));
+    }
+  });
+
+  const total = blocks.reduce((n, b) => n + b.length, 0);
+  const deck = [];
+  let last = null;
+  while (blocks.length) {
+    let options = blocks.filter((b) => b[0].cat.id !== last);
+    if (!options.length) options = blocks;
+    // as duas primeiras rodadas são sempre tranquilas: nada de desafio nem de romance
+    if (deck.length < 6) {
+      let calm = options.filter((b) => b[0].cat.mode !== 'challenge');
+      const softer = calm.filter((b) => !['romance', 'brisa'].includes(b[0].cat.theme));
+      if (softer.length) calm = softer;
+      if (calm.length) options = calm;
+    }
+    const block = weightedPick(options, options.map((b) => blockWeight(b[0].cat, deck.length / total)));
+    blocks.splice(blocks.indexOf(block), 1);
+    deck.push(...block);
+    last = block[0].cat.id;
+  }
+  return deck;
+}
+
+// cartas coringa: as que vocês ainda não viram vêm primeiro
+function freshFirst(list) {
+  const seen = new Set(state.seen);
+  const s = shuffle(list);
+  return [...s.filter((t) => !seen.has(t)), ...s.filter((t) => seen.has(t))];
+}
+
 function buildDeck() {
-  const pool = (DECKS[state.theme] || [])
-    .filter((d) => state.selected[state.theme].has(d.id))
-    .flatMap((d) => d.cards.map((text) => ({ text, cat: d })));
-  const deck = shuffle(pool);
+  const deck = buildQuestions();
+  const pools = {
+    surprise: state.surprises && typeof SURPRISES !== 'undefined' ? freshFirst(SURPRISES).map((text) => ({ text, cat: SURPRISE_CAT })) : [],
+    sip: state.sips && typeof SIPS !== 'undefined' ? freshFirst(SIPS).map((text) => ({ text, cat: SIP_CAT })) : []
+  };
+  let game = Math.random() < 0.5 ? 'cor' : 'roleta';
+  let lastKind = null;
 
-  // cartas coringa (surpresa e/ou gole ou trago), intercaladas
-  const extras = shuffle([
-    ...(state.surprises && typeof SURPRISES !== 'undefined' ? SURPRISES.map((text) => ({ text, cat: SURPRISE_CAT })) : []),
-    ...(state.sips && typeof SIPS !== 'undefined' ? SIPS.map((text) => ({ text, cat: SIP_CAT })) : []),
-    // um mini-jogo a cada ~12 cartas, revezando cor e roleta
-    ...(state.games ? Array.from({ length: Math.max(2, Math.round(deck.length / 12)) }, (_, i) => {
-      const game = i % 2 ? 'roleta' : 'cor';
-      return { ...GAME_CARDS[game], game };
-    }) : [])
-  ]);
-  if (!extras.length) return deck;
-
-  // uma a cada 4–7 cartas, nunca logo no começo
+  // coringa a cada 5–8 perguntas; mini-jogo garantido lá pela 10ª e depois a cada 15–20.
+  // nunca dois coringas do mesmo tipo seguidos, e nada logo depois de um desafio.
   const out = [];
-  let next = Math.round(rand(4, 6));
-  deck.forEach((item) => {
+  let count = 0;
+  let nextWild = Math.round(rand(5, 7));
+  let nextGame = Math.round(rand(9, 12));
+  deck.forEach((item, i) => {
     out.push(item);
-    if (out.length >= next && extras.length) {
-      out.push(extras.pop());
-      next = out.length + Math.round(rand(4, 7));
+    count++;
+    if (item.cat.mode === 'challenge' || i === deck.length - 1) return;
+
+    if (state.games && count >= nextGame) {
+      out.push({ ...GAME_CARDS[game], game });
+      game = game === 'cor' ? 'roleta' : 'cor';
+      lastKind = 'game';
+      nextGame = count + Math.round(rand(15, 20));
+      nextWild = Math.max(nextWild, count + Math.round(rand(4, 6)));
+      return;
+    }
+
+    if (count >= nextWild) {
+      const kinds = Object.keys(pools).filter((k) => pools[k].length);
+      const fresh = kinds.filter((k) => k !== lastKind);
+      const kind = pick(fresh.length ? fresh : kinds);
+      if (kind) {
+        out.push(pools[kind].shift());
+        lastKind = kind;
+        nextGame = Math.max(nextGame, count + 4);
+      }
+      nextWild = count + Math.round(rand(5, 8));
     }
   });
   return out;
@@ -283,6 +429,7 @@ function buildDeck() {
 
 function startGame() {
   state.deck = buildDeck();
+  if (state.theme === 'todo') setVisual(state.deck[0].cat.theme);
   state.index = -1;
   state.turnCount = 0;
   state.favs = [];
@@ -385,7 +532,7 @@ function isFav() { return state.favs.includes(currentItem()); }
 
 function updateFav() {
   const on = state.index >= 0 && isFav();
-  const [off, onIcon] = THEMES[state.theme].favIcons;
+  const [off, onIcon] = THEMES[state.visual].favIcons;
   btnFav.setAttribute('aria-pressed', String(on));
   btnFav.firstElementChild.textContent = on ? onIcon : off;
 }
@@ -399,6 +546,9 @@ async function draw() {
     card.classList.add(state.index % 2 ? 'leave-l' : 'leave-r');
     btnFav.disabled = true;
     await wait(reduceMotion ? 0 : 520);
+    // baralho todo: a tela vira a vibe da próxima carta enquanto a carta tá fora da tela
+    const upcoming = state.deck[state.index + 1];
+    if (state.theme === 'todo' && upcoming && upcoming.cat.theme) await switchVisual(upcoming.cat.theme);
     card.classList.remove('leave-l', 'leave-r', 'flipped', 'enter');
     card.classList.add('reset');
     void card.offsetWidth;
@@ -408,7 +558,12 @@ async function draw() {
   state.index++;
   if (state.index >= state.deck.length) { state.busy = false; endGame(); return; }
 
-  fillCard(currentItem());
+  const item = currentItem();
+  if (['surprise', 'sip'].includes(item.cat.mode) && !state.seen.includes(item.text)) {
+    state.seen = [...state.seen, item.text].slice(-28); // as mais antigas voltam a ser "novas"
+    persist();
+  }
+  fillCard(item);
   updateProgress();
   updateFav();
   stage.classList.toggle('last', state.index === state.deck.length - 1);
@@ -426,7 +581,7 @@ async function draw() {
   btnNext.textContent = nextLabel();
   btnFav.disabled = false;
   tip.textContent = state.index === 0 ? 'Curtiu uma pergunta? Toque na estrelinha pra guardar' : '';
-  if (state.index === 0 && state.theme === 'romance') tip.textContent = 'Curtiu uma pergunta? Toque no coração pra guardar';
+  if (state.index === 0 && state.visual === 'romance') tip.textContent = 'Curtiu uma pergunta? Toque no coração pra guardar';
 
   await wait(reduceMotion ? 0 : 700);
   state.busy = false;
@@ -474,7 +629,8 @@ const END_LINES = {
   papo: (n) => `foram ${n} ${n === 1 ? 'carta' : 'cartas'} de papo bom. Do tipo que faz perder a hora.`,
   resenha: (n) => `${n} ${n === 1 ? 'carta' : 'cartas'} de pura resenha. Ninguém saiu ileso.`,
   romance: (n) => `vocês viraram ${n} ${n === 1 ? 'carta' : 'cartas'} juntos. Que venham os próximos encontros.`,
-  brisa: (n) => `${n} ${n === 1 ? 'carta' : 'cartas'} depois, a conversa já foi longe. Agora bebam uma água e peçam a larica.`
+  brisa: (n) => `${n} ${n === 1 ? 'carta' : 'cartas'} depois, a conversa já foi longe. Agora bebam uma água e peçam a larica.`,
+  todo: (n) => `${n} ${n === 1 ? 'carta' : 'cartas'} passando por todas as vibes. Teve de tudo um pouco.`
 };
 
 function endGame() {
@@ -502,7 +658,7 @@ function endGame() {
 }
 
 $('#btn-again').addEventListener('click', startGame);
-$('#btn-home').addEventListener('click', () => show('start'));
+$('#btn-home').addEventListener('click', () => { applyTheme(state.theme); show('start'); });
 
 /* =====================================================================
    Explosão de símbolos
@@ -511,7 +667,7 @@ const burstBox = $('#bursts');
 
 function burstAt(el, n = 8, wild = false) {
   if (reduceMotion) return;
-  const t = THEMES[state.theme];
+  const t = THEMES[state.visual];
   const glyphs = wild ? ['i:dice', '✦', '★', '!', '?'] : t.bursts;
   const r = el.getBoundingClientRect();
   const cx = r.left + r.width / 2;

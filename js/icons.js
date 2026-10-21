@@ -2,7 +2,7 @@
 
 /* =====================================================================
    Ícones desenhados à mão (SVG 24×24, traço na cor do tema).
-   Os baralhos em js/questions.js apontam pra estes nomes no campo `icon`.
+   Os baralhos em js/decks/ apontam pra estes nomes no campo `icon`.
    ===================================================================== */
 const DOT = (cx, cy, r = 1.1) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="currentColor" stroke="none"/>`;
 
@@ -25,6 +25,7 @@ const ICONS = {
   bolt: '<path d="M13 2.5 4.5 13.5H11l-1 8 8.5-11H12l1-8z"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20z"/>',
   leaf: leafSvg(),
+  layers: '<path d="M12 2.5 21 7.5l-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 16.5l9 5 9-5"/>',
 
   // baralhos
   cube: '<path d="M12 2.8 20 7.2v9.6L12 21.2 4 16.8V7.2z"/><path d="M4 7.2l8 4.4 8-4.4M12 11.6v9.6"/>',

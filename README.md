@@ -23,7 +23,9 @@ Cada vibe muda o visual, o fundo animado e as perguntas.
 | **Clima de romance** | um pouco mais perto | Flerte leve, A gente, Date ideal, Ousadia |
 | **Brisa** | gole, trago e papo doido | Eu nunca, Papo de brisa, Larica, Vai ou bebe |
 
-São 20 cartas por baralho, ou seja, 400 perguntas e desafios no total.
+| **Baralho todo** | o melhor de cada vibe | vocês escolhem qualquer baralho de qualquer vibe |
+
+São 12 cartas por baralho, escolhidas a dedo. No **Baralho todo**, entram as 6 melhores de cada baralho escolhido, em blocos do mesmo assunto, e a tela muda de vibe junto com a carta: se a carta é de Resenha, o visual vira Resenha; se é da Brisa, fica verde.
 
 ## Extras (ligam e desligam na tela inicial)
 
@@ -42,14 +44,15 @@ Não precisa instalar nada: é só abrir o `index.html` no navegador. As fontes 
 
 ## Mudar as perguntas
 
-Todas as perguntas ficam em [`js/questions.js`](js/questions.js), separadas por vibe e por baralho. Para trocar uma pergunta, edite o texto entre aspas. Para criar um baralho novo, copie um bloco `{ id, icon, name, desc, cards }` e troque o conteúdo. Os ícones disponíveis ficam em [`js/icons.js`](js/icons.js).
+As perguntas ficam em [`js/decks/`](js/decks), um arquivo por vibe, mais o `extras.js` com as cartas surpresa e as de gole ou trago. Em cada baralho, as cartas estão em ordem de qualidade, e as 6 primeiras entram no Baralho todo. Para trocar uma pergunta, edite o texto entre aspas. Para criar um baralho novo, copie um bloco `{ id, icon, name, desc, cards }` e troque o conteúdo. Os ícones disponíveis ficam em [`js/icons.js`](js/icons.js).
 
 ## Estrutura
 
 ```
 index.html          telas do jogo
 css/style.css       visual e as 5 vibes
-js/questions.js     todas as perguntas, cartas surpresa e de gole ou trago
+js/decks/*.js       perguntas de cada vibe (leve, papo, resenha, romance, brisa)
+js/decks/extras.js  cartas surpresa e de gole ou trago
 js/icons.js         ícones desenhados em SVG
 js/app.js           lógica do jogo e fundo animado
 js/minigames.js     adivinha a cor e roleta do encontro
